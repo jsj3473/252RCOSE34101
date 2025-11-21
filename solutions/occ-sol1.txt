@@ -1,0 +1,31 @@
+=== Object Map ===
+[INFO] name: A value: 0
+[INFO] name: B value: 0
+===================
+=== Transaction Map ===
+Transaction ID: 1
+  Actions: R1(B) C1 
+  Committed: true
+  Aborted: false
+  Timestamp:0
+  Read Set: 
+  Write Set: 
+Transaction ID: 2
+  Actions: R2(B) R2(A) C2 
+  Committed: true
+  Aborted: false
+  Timestamp:1
+  Read Set: 
+  Write Set: 
+========================
+ACTION LIST
+R1(B) R2(B) R2(A) C1 C2 
+[READ] trx1 read object: B
+[READ] trx2 read object: B
+[READ] trx2 read object: A
+[VALIDATION] trx:1 enter validation phase 
+[WRITE] objects are written to main database file!
+[COMMIT] transaction tx1
+[VALIDATION] trx:2 enter validation phase 
+[WRITE] objects are written to main database file!
+[COMMIT] transaction tx2

@@ -1,0 +1,83 @@
+name: Autograding Tests
+on:
+  - push
+  - workflow_dispatch
+  - repository_dispatch
+permissions:
+  checks: write
+  actions: read
+  contents: read
+
+jobs:
+  run-autograding-tests:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-classroom[bot]'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+        
+    - name: Configure and Build
+      run: |
+        mkdir bld
+        cd bld
+        cmake ..
+        make -j
+
+    - name: Run Locking Protocol
+      run: |
+        cd bld
+        mkdir -p test_outputs
+        total_tests=4
+        TOTAL_SCORE=0 
+        declare -A scores=( [1]=10 [2]=10 [3]=10 [4]=20 )
+        for i in $(seq 1 $total_tests); do
+          ./lock ../tests/test${i}.txt &> ./test_outputs/lock-test${i}_output.txt
+          diff -u ../solutions/lock-sol${i}.txt ./test_outputs/lock-test${i}_output.txt > ./test_outputs/lock-test${i}_diff.txt || true
+          
+          if [ ! -s test_outputs/lock-test${i}_diff.txt ]; then
+            echo "✅ Test $i passed."
+            TOTAL_SCORE=$((TOTAL_SCORE + scores[$i]))
+          else
+            echo "❌ Test $i failed."
+          fi
+        done
+        echo "TOTAL_SCORE=$TOTAL_SCORE" >> $GITHUB_ENV
+
+    - name: Run OCC Protocol
+      run: |
+        cd bld
+        mkdir -p test_outputs
+        total_tests=4
+        TOTAL_SCORE="${{ env.TOTAL_SCORE || 0 }}"
+        declare -A scores=( [1]=10 [2]=10 [3]=10 [4]=20 )
+        for i in $(seq 1 $total_tests); do
+          ./occ ../tests/test${i}.txt &> ./test_outputs/occ-test${i}_output.txt
+          diff -u ../solutions/occ-sol${i}.txt ./test_outputs/occ-test${i}_output.txt > ./test_outputs/occ-test${i}_diff.txt || true
+          
+          if [ ! -s test_outputs/occ-test${i}_diff.txt ]; then
+            echo "✅ Test $i passed."
+            TOTAL_SCORE=$((TOTAL_SCORE + scores[$i]))
+          else
+            echo "❌ Test $i failed."
+          fi
+        done
+
+        echo "Final Score: $((TOTAL_SCORE)) / 100"
+
+    - name: Post Results to PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const TOTAL_SCORE = parseInt(process.env.TOTAL_SCORE);
+          const commentBody = `
+            ### Autograding Results
+            **Final Score**: $((TOTAL_SCORE))/100
+          `;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: commentBody,
+          });
