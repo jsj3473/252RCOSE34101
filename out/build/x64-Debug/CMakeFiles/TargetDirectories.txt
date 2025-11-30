@@ -1,0 +1,4 @@
+C:/Users/user/homework2-jsj3473/out/build/x64-Debug/CMakeFiles/lock.dir
+C:/Users/user/homework2-jsj3473/out/build/x64-Debug/CMakeFiles/occ.dir
+C:/Users/user/homework2-jsj3473/out/build/x64-Debug/CMakeFiles/edit_cache.dir
+C:/Users/user/homework2-jsj3473/out/build/x64-Debug/CMakeFiles/rebuild_cache.dir

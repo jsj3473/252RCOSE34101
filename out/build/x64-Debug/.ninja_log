@@ -1,0 +1,4 @@
+# ninja log v6
+25	776	7856108780987065	CMakeFiles/lock.dir/src/main.cpp.obj	df491d3b0a609cda
+33	840	7856108781064482	CMakeFiles/lock.dir/src/occ.cpp.obj	bf6aeaec579b11a6
+13	902	7856108780871887	CMakeFiles/lock.dir/src/lock.cpp.obj	504117b73dec6cf7

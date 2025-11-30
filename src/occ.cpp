@@ -27,7 +27,8 @@ void occ::trx_read(trx_t& trx, object_t obj) {
 	occ_timestamp++;
 	std::cout << "[READ] trx" << trx.id << " read object: " << obj.name << "\n";
 
-	// DIY
+	// DIY: 트랜잭션의 private read set에 객체 추가 (중복은 set이 자동으로 제거)
+	trx.read_set.insert(obj);
 }
 
 /*
@@ -39,7 +40,8 @@ void occ::trx_write(trx_t& trx, object_t obj) {
 	occ_timestamp++;
 	std::cout << "[LOCAL WRITE] trx" << trx.id << " write object: " << obj.name << "\n";
 
-	// DIY
+	// DIY: 트랜잭션의 private write set에 객체 추가
+	trx.write_set.insert(obj);
 }
 
 
@@ -60,8 +62,49 @@ void occ::trx_write(trx_t& trx, object_t obj) {
 bool occ::trx_validate(trx_t& trx) {
 	occ_timestamp++;
 	std::cout << "[VALIDATION] trx:" << trx.id << " enter validation phase \n";
-	// DIY
-	// you can change `return true`; I added this statement for compilation purposes.
+
+	// 1) 이 트랜잭션의 validate 타임스탬프 설정
+	trx.validate_ts = occ_timestamp;   // ← 이름은 system.h에 맞춰 수정
+
+	// 2) 다른 트랜잭션들과 충돌 여부 검사
+	for (auto it = trx_map.begin(); it != trx_map.end(); ++it) {
+		trx_t& other = it->second;
+
+		if (other.id == trx.id) continue; // 자기 자신은 스킵
+
+		// 아직 커밋 안 된 트랜잭션은 검증 대상에서 제외
+		// (finish_ts 초기값이 0 또는 -1 같은지 system.h 보고 조건 맞추세요)
+		if (other.finish_ts == 0) continue;
+
+		// (1) other 가 trx 시작 전에 이미 끝났으면 겹치는 구간이 없음 → OK
+		if (other.finish_ts <= trx.start_ts) {
+			continue;
+		}
+
+		// (2) other 가 trx 검증 이후에 시작했다면 아직 겹치는 거 없음 → OK
+		if (other.start_ts >= trx.validate_ts) {
+			continue;
+		}
+
+		// 여기까지 왔다는 건 시간적으로 overlap 가능성이 있는 트랜잭션
+		// → other.write_set ∩ trx.read_set 가 비어 있는지 체크
+		bool conflict = false;
+		for (const auto& obj : trx.read_set) {
+			if (other.write_set.find(obj) != other.write_set.end()) {
+				std::cout << "[VALIDATION FAIL] trx" << trx.id
+					<< " conflicts with trx" << other.id
+					<< " on object " << obj.name << "\n";
+				conflict = true;
+				break;
+			}
+		}
+
+		if (conflict) {
+			return false;   // 검증 실패 → 호출 쪽(run)에서 롤백 호출해야 함
+		}
+	}
+
+	// 여기까지 왔으면 검증 성공
 	return true;
 }
 
@@ -73,6 +116,8 @@ void occ::commit(trx_t& trx) {
 	occ_timestamp++;
 	std::cout << "[COMMIT] transaction tx" << trx.id << "\n";
 	// DIY
+		// 커밋 완료 시각만 업데이트
+	trx.finish_ts = occ_timestamp;   // 이름은 system.h에 맞춰서 수정
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
