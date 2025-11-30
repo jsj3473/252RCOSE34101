@@ -36,6 +36,7 @@ void lock::print_lock_list() {
     }
 }
 
+
 /*
 	Acquire lock to the given object with lock type following these steps.
 
@@ -63,96 +64,103 @@ void lock::print_lock_list() {
 	- Lock list does not allow duplicate lock. For example, 
 	- We only conisder two types of locks: LOCK_TYPE::SHARED and LOCK_TYPE::EXCLUSIVE
 */
-bool lock::acquire_lock(trx_t trx, object_t obj, LOCK_TYPE type) {
-	// ±âÁ¸¿¡ obj¿¡ °É·Á ÀÖ´Â lockµéÀ» ½º³À¼¦À¸·Î º¹»çÇØ¼­ °Ë»ç
-	std::vector<std::pair<trx_t, LOCK_TYPE>> existing;
-	auto it = lock_list.find(obj);
-	if (it != lock_list.end()) {
-		existing = it->second; // rollback¿¡¼­ lock_list°¡ ¹Ù²î¾îµµ ¾ÈÀüÇÏ°Ô º¸±â À§ÇØ º¹»ç
-	}
+bool lock::acquire_lock(trx_t trx, object_t obj, LOCK_TYPE type) {	
+    // step1. í•´ë‹¹ object ì˜ ê¸°ì¡´ lock ë“¤ ì°¾ê¸°
+    auto it = lock_list.find(obj);
+	    // std::cout << "\n[DEBUG] acquire_lock req T" << trx.id
+        //       << " obj=" << obj.name
+        //       << " type=" << (type == LOCK_TYPE::SHARED ? "S" : "X") << "\n";
+    if (it == lock_list.end()) {
+        // ì•„ë¬´ë„ ì•ˆ ì¡ê³  ìˆìœ¼ë©´ ë°”ë¡œ íšë“
+        lock_list[obj].push_back(std::make_pair(trx, type));
+        return true;
+    }
 
-	// ÀÚ±â ÀÚ½ÅÀÌ ÀÌ¹Ì °®°í ÀÖ´Â lock ¿©ºÎ/Á¾·ù Ã¼Å©
-	bool already_has_lock = false;
-	bool same_type = false;
-	bool need_upgrade = false; // S ¡æ X ¾÷±×·¹ÀÌµå
+    auto &locks = it->second;
+    // std::cout << "[DEBUG]  -> existing locks on " << obj.name << ":\n";
+    // for (auto &p : locks) {
+    //     std::cout << "    holder T" << p.first.id
+    //               << " type=" << (p.second == LOCK_TYPE::SHARED ? "S" : "X")
+    //               << " ts=" << p.first.timestamp << "\n";
+    // }
+    // ì´ íŠ¸ëœì­ì…˜ì´ ì´ë¯¸ ë“¤ê³  ìˆëŠ”ì§€ í™•ì¸ (ì—…ê·¸ë ˆì´ë“œ ëŒ€ë¹„)
+    bool has_own_lock = false;
+    LOCK_TYPE own_type = LOCK_TYPE::SHARED;
 
-	for (auto& p : existing) {
-		if (p.first == trx) {
-			already_has_lock = true;
-			if (p.second == type) {
-				same_type = true;          // ÀÌ¹Ì µ¿ÀÏÇÑ lock º¸À¯
-			}
-			else {
-				// ¿©±â¼­´Â S º¸À¯, X ¿äÃ»ÀÎ °æ¿ì¸¸ ¿Â´Ù°í °¡Á¤
-				need_upgrade = true;
-			}
-			break;
-		}
-	}
+    for (auto &p : locks) {
+        if (p.first.id == trx.id) {
+            has_own_lock = true;
+            own_type = p.second;
+            break;
+        }
+    }
 
-	// µÎ lock »çÀÌÀÇ conflict ¿©ºÎ (´Ù¸¥ Æ®·£Àè¼Ç ±âÁØ)
-	auto is_conflict = [](LOCK_TYPE held, LOCK_TYPE req) -> bool {
-		// S-S ´Â compatible, ³ª¸ÓÁö´Â conflict
-		if (held == LOCK_TYPE::SHARED && req == LOCK_TYPE::SHARED) return false;
-		return true;
-		};
+    // ì´ë¯¸ ê°™ì€ íƒ€ì…ì˜ ë½ì„ ë“¤ê³  ìˆìœ¼ë©´ ë” í•  ì¼ ì—†ìŒ
+    if (has_own_lock && own_type == type) {
+        return true;
+    }
 
-	bool can_acquire = true;
+    auto is_conflict = [](LOCK_TYPE held, LOCK_TYPE req) {
+        // S-S ë§Œ í˜¸í™˜, ê·¸ ì™¸ëŠ” ì „ë¶€ ì¶©ëŒ
+        if (held == LOCK_TYPE::SHARED && req == LOCK_TYPE::SHARED) return false;
+        return true;
+    };
 
-	// step1 & step2: ±âÁ¸ lockµé°ú Ãæµ¹ ¿©ºÎ È®ÀÎ + wound-wait ·ê Àû¿ë
-	for (auto& p : existing) {
-		trx_t other_trx = p.first;
-		LOCK_TYPE held_type = p.second;
+    bool conflict_with_older = false;
+    std::vector<trx_t> victims;   // younger ë“¤ â€“ wound ëŒ€ìƒ
 
-		// ÀÚ±â ÀÚ½ÅÀº ÀÌ¹Ì À§¿¡¼­ Ã³¸®ÇßÀ¸¹Ç·Î °Ç³Ê¶Ü
-		if (other_trx == trx) continue;
+    // step2. ì¶©ëŒ í™•ì¸ + wound-wait ì •ì±… ì ìš©
+    for (auto &p : locks) {
+        trx_t holder = p.first;
+        LOCK_TYPE held_type = p.second;
 
-		// Ãæµ¹ ¾È ³ª¸é »ó°ü ¾øÀ½
-		if (!is_conflict(held_type, type)) continue;
+        if (holder.id == trx.id) continue; // ìê¸° ìì‹ ì€ íŒ¨ìŠ¤
 
-		// ¿©±â¼­ºÎÅÍ´Â ÁøÂ¥ conflict
-		if (trx < other_trx) {
-			// ÇöÀç trx °¡ ´õ old ¡æ younger ¸¦ Á×ÀÎ´Ù(rollback)
-			rollback(other_trx);
-			// rollback ÀÌ lock_list¿¡¼­ other_trx ÀÇ lock À» Á¦°ÅÇØ ÁÙ °ÍÀÌ¶ó °¡Á¤
-		}
-		else {
-			// ÇöÀç trx °¡ younger ¡æ º»ÀÎÀÌ Á×¾î¾ß ÇÔ
-			rollback(trx);
-			can_acquire = false;
-			break;
-		}
-	}
+        if (!is_conflict(held_type, type)) continue;
 
-	if (!can_acquire) {
-		// lock ¸ø ¾ò¾úÀ¸¹Ç·Î false
-		print_lock_list();
-		return false;
-	}
+		// ë°”ë¡œ ì—¬ê¸°!
+        // std::cout << "[DEBUG] conflict: req T" << trx.id
+        //           << " (ts=" << trx.timestamp
+        //           << "), holder T" << holder.id
+        //           << " (ts=" << holder.timestamp << ")\n";
 
-	// step3: lock È¹µæ ¶Ç´Â ¾÷±×·¹ÀÌµå
-	if (same_type) {
-		// ÀÌ¹Ì °°Àº lock À» °®°í ÀÖ´Â °æ¿ì: ¾Æ¹«°Íµµ ¾È ÇÏ°í ¼º°ø Ã³¸®
-		// (Áßº¹ »ğÀÔ ±İÁö)
-	}
-	else if (need_upgrade) {
-		// S ¡æ X ¾÷±×·¹ÀÌµå: ½ÇÁ¦ lock_list¿¡¼­ ÇØ´ç ¿£Æ®¸®¸¦ Ã£¾Æ Å¸ÀÔ¸¸ º¯°æ
-		auto& lock_vec = lock_list[obj]; // Á¸ÀçÇÏÁö ¾ÊÀ¸¸é ÀÚµ¿ »ı¼ºµÇÁö¸¸, ÀÌ¹Ì ÀÖ´Ù°í º¸´Â°Ô Á¤»ó
-		for (auto& p : lock_vec) {
-			if (p.first == trx) {
-				p.second = type; // EXCLUSIVE ·Î ½Â°İ
-				break;
-			}
-		}
-	}
-	else {
-		// »õ·Î lock À» Àâ´Â °æ¿ì: Áßº¹ ¾ø´Ù°í °¡Á¤ÇÏ°í push_back
-		lock_list[obj].push_back(std::make_pair(trx, type));
-	}
+        // trx ê°€ older ì¸ ê²½ìš°: younger holder ë¡¤ë°± (wound-wait)
+        if (trx.timestamp < holder.timestamp) {
+            victims.push_back(holder);
+        } else {
+            // holder ê°€ older â†’ ìš°ë¦¬ëŠ” ê¸°ë‹¤ë ¤ì•¼ í•¨ (block)
+            conflict_with_older = true;
+        }
+    }
 
-	print_lock_list();
-	return true;
+    // younger ë“¤ ë¨¼ì € ë¡¤ë°± (release_lock ê¹Œì§€ ì²˜ë¦¬ë¨)
+    for (auto &v : victims) {
+        rollback(v);
+    }
+
+    // older ì™€ì˜ ì¶©ëŒì´ ë‚¨ì•„ ìˆìœ¼ë©´ ì§€ê¸ˆì€ ëª» ì¡ìŒ â†’ BLOCK
+    if (conflict_with_older) {
+        return false;
+    }
+
+    // ì—¬ê¸°ê¹Œì§€ ì™”ìœ¼ë©´ ì¶©ëŒ ì—†ìŒ â†’ lock ë¶€ì—¬ / ì—…ê·¸ë ˆì´ë“œ
+    auto &final_locks = lock_list[obj];
+
+    if (has_own_lock) {
+        // S â†’ X ì—…ê·¸ë ˆì´ë“œ
+        for (auto &p : final_locks) {
+            if (p.first.id == trx.id) {
+                p.second = type;
+                break;
+            }
+        }
+    } else {
+        final_locks.push_back(std::make_pair(trx, type));
+    }
+
+    return true;
 }
+
 
 
 
@@ -170,9 +178,9 @@ void lock::release_lock(trx_t trx) {
 	for (auto it = lock_list.begin(); it != lock_list.end(); ) {
 		auto& locks = it->second;  // vector/list of (trx_t, LOCK_TYPE)
 
-		// ÇØ´ç object¿¡ °É¸° lockµé Áß¿¡¼­ trx°¡ ÀâÀº lock¸¸ Á¦°Å
+		// ï¿½Ø´ï¿½ objectï¿½ï¿½ ï¿½É¸ï¿½ lockï¿½ï¿½ ï¿½ß¿ï¿½ï¿½ï¿½ trxï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ lockï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 		for (auto lit = locks.begin(); lit != locks.end(); ) {
-			if (lit->first.id == trx.id) {   // °°Àº Æ®·£Àè¼ÇÀÌ¸é Á¦°Å
+			if (lit->first.id == trx.id) {   // ï¿½ï¿½ï¿½ï¿½ Æ®ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ì¸ï¿½ ï¿½ï¿½ï¿½ï¿½
 				lit = locks.erase(lit);
 			}
 			else {
@@ -180,7 +188,7 @@ void lock::release_lock(trx_t trx) {
 			}
 		}
 
-		// ÀÌ object¿¡ ´õ ÀÌ»ó lockÀÌ ¾øÀ¸¸é map¿¡¼­ ÅëÂ°·Î Á¦°Å
+		// ï¿½ï¿½ objectï¿½ï¿½ ï¿½ï¿½ ï¿½Ì»ï¿½ lockï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ mapï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Â°ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 		if (locks.empty()) {
 			it = lock_list.erase(it);
 		}
@@ -206,46 +214,43 @@ void lock::release_lock(trx_t trx) {
 	[HINT] check `actions` vector, we record transaction's actions in the `trx.actions` vector.
 */
 
-void lock::rollback(trx_t trx) {
-	std::cout << "[ROLLBACK] TX" << trx.id << " is rollbeck!\n";
-
-	// step1. Release all locks held by the transaction.
-	release_lock(trx);
-
-	// step2. Remove the actions performed by the transaction from the `output` vector.
-	for (auto it = output.begin(); it != output.end(); ) {
-		std::string& op = *it;
-		// ¾×¼Ç Æ÷¸ËÀÌ R1(A), W2(B), C1 ÀÌ·± Çü½ÄÀÌ¶ó°í °¡Á¤
-		int tid = (int)(op[1] - '0');
-		if (tid == trx.id) {
-			it = output.erase(it);
-		}
-		else {
-			++it;
-		}
-	}
-
-	// step3-1. Remove remaining actions of this transaction from global `actions` vector.
-	for (auto it = actions.begin(); it != actions.end(); ) {
-		std::string& op = *it;
-		int tid = (int)(op[1] - '0');
-		if (tid == trx.id) {
-			it = actions.erase(it);
-		}
-		else {
-			++it;
-		}
-	}
-
-	// step3-2. Append all actions of this transaction to the end of `actions` vector.
-	// trx.actions ¿¡´Â ÀÌ Æ®·£Àè¼ÇÀÇ ÀüÃ¼ ¾×¼Ç ¹®ÀÚ¿­µéÀÌ µé¾î ÀÖ´Ù°í °¡Á¤
-	for (auto& act : trx.actions) {
-		actions.push_back(act);
-	}
-
-	// DO NOT MODIFY
-	trx.timestamp = global_counter++;
+// lock.cpp ìƒë‹¨ ì–´ë”˜ê°€ì— í—¬í¼ í•˜ë‚˜ ì¶”ê°€
+static int extract_tid(const std::string& op) {
+    int tid = 0;
+    bool found = false;
+    for (char c : op) {
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            tid = tid * 10 + (c - '0');  // ë‘ ìë¦¬ ì´ìƒë„ ëŒ€ì‘
+            found = true;
+        } else if (found) {
+            break;
+        }
+    }
+    return found ? tid : -1;  // ìˆ«ì ì—†ìœ¼ë©´ -1
 }
+
+void lock::rollback(trx_t trx) {
+    std::cout << "[ROLLBACK] TX" << trx.id << " is rollbeck!\n";
+
+    // step1. Release all locks held by the transaction.
+    release_lock(trx);
+
+    // step2. Remove the actions performed by the transaction from the `output` vector.
+    for (auto it = output.begin(); it != output.end(); ) {
+        const std::string& op = *it;
+        if (op.size() >= 2 && (int)(op[1] - '0') == trx.id) {
+            it = output.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+
+
+    // DO NOT MODIFY
+    trx.timestamp = global_counter++;
+}
+
 
 
 
@@ -263,44 +268,50 @@ void lock::rollback(trx_t trx) {
 STATUS lock::execute(std::string action, trx_t trx, object_t obj) {
 	char opcode = action[0];
 	OP op;
-	switch (opcode) {
-	case 'R': op = OP::READ; break;
-	case 'W': op = OP::WRITE; break;
-	case 'C': op = OP::COMMIT; break;
-	default:  op = OP::NONE;  break;
-	};
+	switch (opcode){
+		case 'R': op = OP::READ; break;
+		case 'W': op = OP::WRITE; break;
+		case 'C': op = OP::COMMIT; break;
+		default:  op = OP::NONE;  break;
+	}; 
 
 	if (op == OP::READ || op == OP::WRITE) {
-		std::cout << "[" << OP_NAME(op) << "]" << " TRX" << trx.id << " OBJECT: " << obj.name << "\n";
-		LOCK_TYPE type = (op == OP::READ) ? LOCK_TYPE::SHARED : LOCK_TYPE::EXCLUSIVE;
+		std::cout << "[" << OP_NAME(op) << "]"
+		          << " TRX" << trx.id
+		          << " OBJECT: " << obj.name << "\n";
 
-		// DIY
+		LOCK_TYPE type = (op == OP::READ)
+		               ? LOCK_TYPE::SHARED
+		               : LOCK_TYPE::EXCLUSIVE;	
+
+		// DIY ì‹œì‘
 		bool ok = acquire_lock(trx, obj, type);
 		if (ok) {
-			// ¶ôÀ» ¼º°øÀûÀ¸·Î È¹µæÇÑ °æ¿ì output ¿¡ ¾×¼Ç ±â·Ï
+			// ë½ íšë“ ì„±ê³µ ì‹œ: output ì— ê¸°ë¡ + success ë©”ì„¸ì§€
 			output.push_back(action);
+			std::cout << action << " success\n";
 			return STATUS::SUCCESS;
-		}
-		else {
-			// ¶ôÀ» ¸ø ÀâÀº °æ¿ì (block µÇ°Å³ª rollback µÈ °æ¿ì)
+		} else {
+			std::cout << action << " is blocked\n";
 			return STATUS::BLOCKED;
 		}
+		// DIY ë
 
-	}
-	else if (op == OP::COMMIT) {
-		// DIY: Ä¿¹Ô ½Ã º¸À¯ ¶ô ¸ğµÎ ÇØÁ¦
+	} else if (op == OP::COMMIT) {
+		// DIY: ì»¤ë°‹ ì‹œ ëª¨ë“  ë½ í•´ì œ
 		release_lock(trx);
 
 		std::cout << "[COMMIT] TRX" << trx.id << "\n";
 		output.push_back(action);
 		return STATUS::COMMIT;
-	}
-	else {
+	} else {
 		std::cout << "WRONG OPERATION\n";
 	}
 
 	return STATUS::NONE;
 }
+
+
 
 
 /*
@@ -314,91 +325,129 @@ STATUS lock::execute(std::string action, trx_t trx, object_t obj) {
 */
 void lock::run() {
 
-	STATUS ret = STATUS::NONE;   // ÃÖ±Ù ½ÇÇà °á°ú ÃÊ±âÈ­ ²À ÇØÁà¾ß ÇÕ´Ï´Ù.
-	for (auto it = actions.begin(); it != actions.end(); ) {
-		if (actions.size() == 0) break;
+    STATUS ret = STATUS::NONE;
 
-		// Now we can parse action with transaction id (`tid`) and object id (`oid`) 
-		std::string op = *it;
-		int tid = (int)(op[1] - '0');
-		char oid = op[3];
+    for (auto it = actions.begin(); it != actions.end(); ) {
+        if (actions.empty()) break;
 
-		// step1. If the result of the most recently executed action is a transaction commit, 
-		// first iterate through the waiting_queue and execute the actions (i.e., call the execute() function).
-		// If the return value is STATUS::BLOCKED, put it back into the waiting_queue.
+        std::string op = *it;
+        if (op.empty()) {            // ì´ìƒí•œ ê³µë°± ë¬¸ìì—´ ë°©ì–´
+            it = actions.erase(it);
+            continue;
+        }
 
-		// DIY
-		if (ret == STATUS::COMMIT) {
-			std::vector<std::string> next_waiting;
+        char opcode = op[0];         // 'R' / 'W' / 'C'
+        int  tid   = -1;
+        char oid   = '\0';
 
-			for (auto& wop : waiting_queue) {
-				int wtid = (int)(wop[1] - '0');
-				char woid = wop[3];
+        // ----- ì•ˆì „í•˜ê²Œ tid / oid íŒŒì‹± -----
+        if (opcode == 'R' || opcode == 'W') {
+            // í˜•ì‹: R1(A) / W2(B) ë¼ê³  ê°€ì • â†’ ìµœì†Œ ê¸¸ì´ 4
+            if (op.size() < 4) {
+                std::cout << "WRONG OP FORMAT: " << op << "\n";
+                it = actions.erase(it);
+                continue;
+            }
+            tid = op[1] - '0';
+            oid = op[3];
+        }
+        else if (opcode == 'C') {
+            // í˜•ì‹: C1 â†’ ìµœì†Œ ê¸¸ì´ 2
+            if (op.size() < 2) {
+                std::cout << "WRONG OP FORMAT: " << op << "\n";
+                it = actions.erase(it);
+                continue;
+            }
+            tid = op[1] - '0';
+            // COMMIT ì€ object ë¥¼ ì•ˆ ì“°ë‹ˆê¹Œ, ì•„ë¬´ object í•˜ë‚˜ ì„ì˜ë¡œ ë„˜ê²¨ì¤Œ
+            if (!obj_map.empty())
+                oid = obj_map.begin()->first;
+        }
+        else {
+            std::cout << "WRONG OP FORMAT: " << op << "\n";
+            it = actions.erase(it);
+            continue;
+        }
+        // -------------------------------
 
-				STATUS wret = execute(wop, trx_map[wtid], obj_map[woid]);
-				ret = wret; // ¡°°¡Àå ÃÖ±Ù¿¡ ½ÇÇàµÈ ¾×¼ÇÀÇ °á°ú¡±¸¦ ret¿¡ À¯Áö
+        // step1. ì§ì „ì— COMMIT ì´ì—ˆìœ¼ë©´ waiting_queue ë¨¼ì € ì²˜ë¦¬
+        if (ret == STATUS::COMMIT) {
+            std::vector<std::string> next_waiting;
 
-				if (wret == STATUS::BLOCKED) {
-					next_waiting.push_back(wop);  // ¾ÆÁ÷µµ ¸·ÇûÀ¸¸é ´Ù½Ã ´ë±â
-				}
-			}
+            for (auto &wop : waiting_queue) {
+                if (wop.empty()) continue;
 
-			waiting_queue = std::move(next_waiting);
-		}
+                char wopcode = wop[0];
+                int  wtid    = -1;
+                char woid    = '\0';
 
-		// step2. For a read/write transaction, check if the transaction is already present in the waiting queue.
-		// If the transaction exists in the waiting_queue, set `blocked` variable to true.
-		// This indicates that current transaction can not proceed in this round.
-		// Refer to step4, we can re-run the remaining actions in the waiting_list.
-		bool blocked = false;
-		// DIY
-		char opcode = op[0];
-		if (opcode == 'R' || opcode == 'W') {
-			for (auto& wop : waiting_queue) {
-				int wtid = (int)(wop[1] - '0');
-				if (wtid == tid) {
-					// ÀÌ Æ®·£Àè¼ÇÀº ÀÌ¹Ì ÀÌÀü ¾×¼Ç¿¡¼­ BLOCKED µÇ¾î waiting_queue¿¡ ÀÖÀ½
-					blocked = true;
-					// ÇöÀç ¾×¼Çµµ ³ªÁß¿¡ ´Ù½Ã ½ÇÇàÇØ¾ß ÇÏ¹Ç·Î waiting_queue¿¡ ³Ö¾î µĞ´Ù.
-					waiting_queue.push_back(op);
-					break;
-				}
-			}
-		}
+                if (wopcode == 'R' || wopcode == 'W') {
+                    if (wop.size() < 4) continue;
+                    wtid = wop[1] - '0';
+                    woid = wop[3];
+                }
+                else if (wopcode == 'C') {
+                    if (wop.size() < 2) continue;
+                    wtid = wop[1] - '0';
+                    if (!obj_map.empty())
+                        woid = obj_map.begin()->first;
+                }
+                else {
+                    continue;
+                }
 
-		// step3. If blocked is false, call the execute() function for the given action. If the transaction is blocked, insert it into the waiting_list for future processing.
-		// Here, YOU DO NOT HAVE TO MODIFY THE CODE. 
-		if (!blocked) {
-			ret = execute(op, trx_map[tid], obj_map[oid]);
-			if (ret == STATUS::BLOCKED) {
-				waiting_queue.push_back(op);
-			}
+                STATUS wret = execute(wop, trx_map[wtid], obj_map[woid]);
+                if (wret == STATUS::BLOCKED)
+                    next_waiting.push_back(wop);
 
-			print_lock_list();
-		}
+                ret = wret;
+            }
 
-		// DO NOT MODIFY
-		it = actions.erase(it);
-	}
+            waiting_queue = std::move(next_waiting);
+        }
 
-	/* DO NOT MODIFY */
-	/* =========================================================================== */
-	// step4. if waiting queue is not empty; we need to re-run
-	if (waiting_queue.size() != 0) {
-		actions.clear();
-		actions.insert(actions.end(), waiting_queue.begin(), waiting_queue.end());
-		waiting_queue.clear();
-		run();
+        // step2. R/W ì¸ë° ì´ë¯¸ waiting_queue ì— ê°™ì€ tid ê°€ ìˆìœ¼ë©´ ë§‰ê¸°
+        bool blocked = false;
+            for (auto &wop : waiting_queue) {
+                if (wop.size() < 2) continue;
+                int wtid = wop[1] - '0';
+                if (wtid == tid) {
+                    blocked = true;
+                    // ë‚˜ì¤‘ì— ë‹¤ì‹œ ì‹¤í–‰í•´ì•¼ í•˜ë‹ˆê¹Œ íì— ë„£ì–´ë‘ 
+                    waiting_queue.push_back(op);
+                    break;
+                }
+            }
 
-	}
-	else {
-		// print final output
-		std::cout << "====== final state ======\n";
-		for (auto& o : output) {
-			std::cout << o << " ";
-		}
-		std::cout << "\n";
-	}
-	/* =========================================================================== */
+        // step3. ì›ë˜ ìŠ¤ì¼ˆë ˆí†¤ ë¡œì§
+        if (!blocked) {
+            ret = execute(op, trx_map[tid], obj_map[oid]);
+            if (ret == STATUS::BLOCKED)
+                waiting_queue.push_back(op);
 
+            print_lock_list();
+        }
+
+        it = actions.erase(it);
+    }
+
+    /* DO NOT MODIFY */
+    /* =========================================================================== */	
+    // step4. if waiting queue is not empty; we need to re-run
+    if (waiting_queue.size() != 0) {
+        actions.clear();
+        actions.insert(actions.end(), waiting_queue.begin(), waiting_queue.end());
+        waiting_queue.clear();
+        run();
+
+    } else {
+        // print final output
+        std::cout << "====== final state ======\n";
+        for (auto &o : output) {
+            std::cout << o << " ";
+        }
+        std::cout << "\n";	
+    }
+    /* =========================================================================== */	
 }
+

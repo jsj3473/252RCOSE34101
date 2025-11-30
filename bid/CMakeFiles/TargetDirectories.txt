@@ -1,0 +1,4 @@
+C:/Users/user/homework2-jsj3473/bid/CMakeFiles/lock.dir
+C:/Users/user/homework2-jsj3473/bid/CMakeFiles/occ.dir
+C:/Users/user/homework2-jsj3473/bid/CMakeFiles/ALL_BUILD.dir
+C:/Users/user/homework2-jsj3473/bid/CMakeFiles/ZERO_CHECK.dir

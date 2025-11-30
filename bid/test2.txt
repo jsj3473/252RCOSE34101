@@ -1,0 +1,82 @@
+=== Object Map ===
+[INFO] name: A value: 0
+[INFO] name: B value: 0
+===================
+=== Transaction Map ===
+Transaction ID: 1
+  Actions: R1(B) W1(A) C1 
+  Committed: true
+  Aborted: false
+  Timestamp:0
+  Read Set: 
+  Write Set: 
+Transaction ID: 2
+  Actions: R2(B) R2(A) C2 
+  Committed: true
+  Aborted: false
+  Timestamp:1
+  Read Set: 
+  Write Set: 
+========================
+ACTION LIST
+R1(B) R2(B) W1(A) R2(A) C1 C2 
+[READ] TRX1 OBJECT: B
+R1(B) success
+--- OBJECT: B---
+S-LOCK acquired by TX1
+--------------------
+[READ] TRX2 OBJECT: B
+R2(B) success
+--- OBJECT: B---
+S-LOCK acquired by TX1
+S-LOCK acquired by TX2
+--------------------
+[WRITE] TRX1 OBJECT: A
+W1(A) success
+--- OBJECT: A---
+X-LOCK acquired by TX1
+--------------------
+--- OBJECT: B---
+S-LOCK acquired by TX1
+S-LOCK acquired by TX2
+--------------------
+[READ] TRX2 OBJECT: A
+R2(A) is blocked
+--- OBJECT: A---
+X-LOCK acquired by TX1
+--------------------
+--- OBJECT: B---
+S-LOCK acquired by TX1
+S-LOCK acquired by TX2
+--------------------
+[LOCK RELEASE] trx1
+Before releasing locks (lock list status): 
+--- OBJECT: A---
+X-LOCK acquired by TX1
+--------------------
+--- OBJECT: B---
+S-LOCK acquired by TX1
+S-LOCK acquired by TX2
+--------------------
+After releasing locks (lock list status): 
+--- OBJECT: B---
+S-LOCK acquired by TX2
+--------------------
+[COMMIT] TRX1
+--- OBJECT: B---
+S-LOCK acquired by TX2
+--------------------
+[READ] TRX2 OBJECT: A
+R2(A) success
+[LOCK RELEASE] trx2
+Before releasing locks (lock list status): 
+--- OBJECT: A---
+S-LOCK acquired by TX2
+--------------------
+--- OBJECT: B---
+S-LOCK acquired by TX2
+--------------------
+After releasing locks (lock list status): 
+[COMMIT] TRX2
+====== final state ======
+R1(B) R2(B) W1(A) C1 R2(A) C2 

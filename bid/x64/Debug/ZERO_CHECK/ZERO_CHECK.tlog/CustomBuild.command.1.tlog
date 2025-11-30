@@ -1,0 +1,10 @@
+^C:\USERS\USER\HOMEWORK2-JSJ3473\BID\CMAKEFILES\E551C2999F0A16B837EAB68579ABC2A6\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/user/homework2-jsj3473 -BC:/Users/user/homework2-jsj3473/bid --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/user/homework2-jsj3473/bid/kudb.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

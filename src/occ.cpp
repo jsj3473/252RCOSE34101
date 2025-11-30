@@ -10,39 +10,49 @@
 
 #include "system.h"
 #include "occ.h"
+#include <cctype> // ì´ë¯¸ ìˆì„ ìˆ˜ë„ ìˆìŒ
+
+static void print_rw_sets(const trx_t& trx) {
+    std::cout << "[DEBUG] trx" << trx.id << " read_set: ";
+    for (const auto& o : trx.read_set) {
+        std::cout << o.name << " ";
+    }
+    std::cout << "\n";
+
+    std::cout << "[DEBUG] trx" << trx.id << " write_set: ";
+    for (const auto& o : trx.write_set) {
+        std::cout << o.name << " ";
+    }
+    std::cout << "\n";
+}
 
 occ::occ(){}
 
-/*
-	Read data item and records it into transation's private read set
-	[HINT] you can access transaction's read/write set like calling this;
-	```
-		trx.read_set
-	``` 
-	In C++, "set" data structures are designed to prevent duplicates.
-	This function does not allow to store duplicate elements.
-*/
 void occ::trx_read(trx_t& trx, object_t obj) {
-	// increment global timestamp (DO NOT REMOVE)
-	occ_timestamp++;
-	std::cout << "[READ] trx" << trx.id << " read object: " << obj.name << "\n";
+    // increment global timestamp (DO NOT REMOVE)
+    occ_timestamp++;
+    std::cout << "[READ] trx" << trx.id << " read object: " << obj.name << "\n";
 
-	// DIY: Æ®·£Àè¼ÇÀÇ private read set¿¡ °´Ã¼ Ãß°¡ (Áßº¹Àº setÀÌ ÀÚµ¿À¸·Î Á¦°Å)
-	trx.read_set.insert(obj);
+    // read_setì— ì¶”ê°€
+    trx.read_set.insert(obj);
+
+    // ë””ë²„ê·¸: í˜„ì¬ read/write set ìƒíƒœ ì°ê¸°
+    //std::cout << "[DEBUG] after READ in trx" << trx.id << "\n";
+    //print_rw_sets(trx);
 }
 
-/*
-	Write data item and records it into transaction's private write set.
-	This function does NOT write to the main database file.
-	[HINT] see `trx_read` function.
-*/
 void occ::trx_write(trx_t& trx, object_t obj) {
-	occ_timestamp++;
-	std::cout << "[LOCAL WRITE] trx" << trx.id << " write object: " << obj.name << "\n";
+    occ_timestamp++;
+    std::cout << "[LOCAL WRITE] trx" << trx.id << " write object: " << obj.name << "\n";
 
-	// DIY: Æ®·£Àè¼ÇÀÇ private write set¿¡ °´Ã¼ Ãß°¡
-	trx.write_set.insert(obj);
+    // write_setì— ì¶”ê°€
+    trx.write_set.insert(obj);
+
+    // ë””ë²„ê·¸: í˜„ì¬ read/write set ìƒíƒœ ì°ê¸°
+    //std::cout << "[DEBUG] after WRITE in trx" << trx.id << "\n";
+    //print_rw_sets(trx);
 }
+
 
 
 /*
@@ -62,49 +72,50 @@ void occ::trx_write(trx_t& trx, object_t obj) {
 bool occ::trx_validate(trx_t& trx) {
 	occ_timestamp++;
 	std::cout << "[VALIDATION] trx:" << trx.id << " enter validation phase \n";
+	// std::cout << "[DEBUG] validate for trx" << trx.id
+    //           << " start=" << trx.start_ts
+    //           << " validate=" << occ_timestamp
+    //           << " finish=" << trx.finish_ts << "\n";
+    // print_rw_sets(trx);
 
-	// 1) ÀÌ Æ®·£Àè¼ÇÀÇ validate Å¸ÀÓ½ºÅÆÇÁ ¼³Á¤
-	trx.validate_ts = occ_timestamp;   // ¡ç ÀÌ¸§Àº system.h¿¡ ¸ÂÃç ¼öÁ¤
+	// 1) ï¿½ï¿½ Æ®ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ validate Å¸ï¿½Ó½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+	trx.validate_ts = occ_timestamp;   // ï¿½ï¿½ ï¿½Ì¸ï¿½ï¿½ï¿½ system.hï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 
-	// 2) ´Ù¸¥ Æ®·£Àè¼Çµé°ú Ãæµ¹ ¿©ºÎ °Ë»ç
+	// 2) ï¿½Ù¸ï¿½ Æ®ï¿½ï¿½ï¿½ï¿½Çµï¿½ï¿½ ï¿½æµ¹ ï¿½ï¿½ï¿½ï¿½ ï¿½Ë»ï¿½
 	for (auto it = trx_map.begin(); it != trx_map.end(); ++it) {
 		trx_t& other = it->second;
 
-		if (other.id == trx.id) continue; // ÀÚ±â ÀÚ½ÅÀº ½ºÅµ
+		if (other.id == trx.id) continue; // ï¿½Ú±ï¿½ ï¿½Ú½ï¿½ï¿½ï¿½ ï¿½ï¿½Åµ
 
-		// ¾ÆÁ÷ Ä¿¹Ô ¾È µÈ Æ®·£Àè¼ÇÀº °ËÁõ ´ë»ó¿¡¼­ Á¦¿Ü
-		// (finish_ts ÃÊ±â°ªÀÌ 0 ¶Ç´Â -1 °°ÀºÁö system.h º¸°í Á¶°Ç ¸ÂÃß¼¼¿ä)
-		if (other.finish_ts == 0) continue;
+		// ï¿½ï¿½ï¿½ï¿½ Ä¿ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ Æ®ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ó¿¡¼ï¿½ ï¿½ï¿½ï¿½ï¿½
+		// (finish_ts ï¿½Ê±â°ªï¿½ï¿½ 0 ï¿½Ç´ï¿½ -1 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ system.h ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ß¼ï¿½ï¿½ï¿½)
+		if (other.finish_ts == INF) continue;
 
-		// (1) other °¡ trx ½ÃÀÛ Àü¿¡ ÀÌ¹Ì ³¡³µÀ¸¸é °ãÄ¡´Â ±¸°£ÀÌ ¾øÀ½ ¡æ OK
+		// (1) other ï¿½ï¿½ trx ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ì¹ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ä¡ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ OK
 		if (other.finish_ts <= trx.start_ts) {
 			continue;
 		}
 
-		// (2) other °¡ trx °ËÁõ ÀÌÈÄ¿¡ ½ÃÀÛÇß´Ù¸é ¾ÆÁ÷ °ãÄ¡´Â °Å ¾øÀ½ ¡æ OK
+		// (2) other ï¿½ï¿½ trx ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ä¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ß´Ù¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½Ä¡ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ OK
 		if (other.start_ts >= trx.validate_ts) {
 			continue;
 		}
 
-		// ¿©±â±îÁö ¿Ô´Ù´Â °Ç ½Ã°£ÀûÀ¸·Î overlap °¡´É¼ºÀÌ ÀÖ´Â Æ®·£Àè¼Ç
-		// ¡æ other.write_set ¡û trx.read_set °¡ ºñ¾î ÀÖ´ÂÁö Ã¼Å©
 		bool conflict = false;
 		for (const auto& obj : trx.read_set) {
 			if (other.write_set.find(obj) != other.write_set.end()) {
-				std::cout << "[VALIDATION FAIL] trx" << trx.id
-					<< " conflicts with trx" << other.id
-					<< " on object " << obj.name << "\n";
 				conflict = true;
 				break;
 			}
 		}
 
 		if (conflict) {
-			return false;   // °ËÁõ ½ÇÆĞ ¡æ È£Ãâ ÂÊ(run)¿¡¼­ ·Ñ¹é È£ÃâÇØ¾ß ÇÔ
+			return false;
 		}
+
 	}
 
-	// ¿©±â±îÁö ¿ÔÀ¸¸é °ËÁõ ¼º°ø
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 	return true;
 }
 
@@ -116,8 +127,8 @@ void occ::commit(trx_t& trx) {
 	occ_timestamp++;
 	std::cout << "[COMMIT] transaction tx" << trx.id << "\n";
 	// DIY
-		// Ä¿¹Ô ¿Ï·á ½Ã°¢¸¸ ¾÷µ¥ÀÌÆ®
-	trx.finish_ts = occ_timestamp;   // ÀÌ¸§Àº system.h¿¡ ¸ÂÃç¼­ ¼öÁ¤
+		// Ä¿ï¿½ï¿½ ï¿½Ï·ï¿½ ï¿½Ã°ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ®
+	trx.finish_ts = occ_timestamp;   // ï¿½Ì¸ï¿½ï¿½ï¿½ system.hï¿½ï¿½ ï¿½ï¿½ï¿½ç¼­ ï¿½ï¿½ï¿½ï¿½
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -166,42 +177,60 @@ void occ::abort(trx_t& trx) {
 	This function reads the operations performs the appropriate work, and then erase the operation from `actions` vector
 */
 void occ::run() {
-	for (auto it = actions.begin(); it != actions.end(); ) {
-		if (actions.size() == 0) break;
-		// now we can parse the opration like 
-		// e.g., R1(A); 
-		// opcode = 'R' / tid = 1 / oid = 'A'
-		std::string op = *it;
-		char opcode = op[0];
-		int tid = (int)(op[1] - '0');
-		char oid = op[3];
+    for (auto it = actions.begin(); it != actions.end(); ) {
+        if (actions.empty()) break;
 
-		// set start_ts
-		if ( trx_map[tid].start_ts == INF) {
-			trx_map[tid].start_ts = occ_timestamp;
-		}
+        std::string op = *it;
 
-		// step1. run operation
-		if ( opcode == 'R') {
-			trx_read(trx_map[tid], obj_map[oid]);
-		} else if ( opcode == 'W') {
-			trx_write(trx_map[tid], obj_map[oid]);
-		} else if (opcode =='C') {
-			bool pass = trx_validate(trx_map[tid]);
-			if (pass) {
-				// here, we invoke write() operation, instead commit() function
-				// because it contains commit process.
-				write(trx_map[tid]);
-			} else {
-				abort(trx_map[tid]);
-			}	
-		} else {
-			std::cout << "WRONG OPERATION!\n";	
-		}
+        // ìµœì†Œ ê¸¸ì´ ì²´í¬ (tid ë½‘ì„ ìˆ˜ ì—†ëŠ” ì´ìƒí•œ ë¬¸ìì—´ ë°©ì–´)
+        if (op.size() < 2) {
+            std::cout << "WRONG OP FORMAT: " << op << "\n";
+            it = actions.erase(it);
+            continue;
+        }
 
-		// erase actions;
-		it = actions.erase(it);
-	}
+        char opcode = op[0];        // R / W / C
+        int  tid    = op[1] - '0';  // ê³¼ì œì—ì„œ tid í•œ ìë¦¬ë¼ê³  ê°€ì •
+        char oid    = '\0';
 
-	return ;
+        // R / W ì¼ ë•Œë§Œ object id í•„ìš”
+        if (opcode == 'R' || opcode == 'W') {
+            // í˜•ì‹: R1(A) / W2(B) â‡’ op[3] ê°€ ê°ì²´ ì´ë¦„
+            if (op.size() < 4) {
+                std::cout << "WRONG OP FORMAT: " << op << "\n";
+                it = actions.erase(it);
+                continue;
+            }
+            oid = op[3];
+        }
+
+        trx_t& trx = trx_map[tid];
+
+        // start_ts ì„¸íŒ…: ì´ íŠ¸ëœì­ì…˜ì´ ì²˜ìŒ ì‹¤í–‰ë  ë•Œ íƒ€ì„ìŠ¤íƒ¬í”„ ë¶€ì—¬
+        if (trx.start_ts == INF) {          // ctorì—ì„œ 0ìœ¼ë¡œ ì´ˆê¸°í™”ë¼ ìˆìœ¼ë‹ˆê¹Œ 0 ê¸°ì¤€
+            trx.start_ts = occ_timestamp; // ì „ì—­ occ_timestamp ì‚¬ìš©
+        }
+
+        // step1. ì—°ì‚° ì‹¤í–‰
+        if (opcode == 'R') {
+            trx_read(trx, obj_map[oid]);
+        } else if (opcode == 'W') {
+            trx_write(trx, obj_map[oid]);
+        } else if (opcode == 'C') {
+            bool pass = trx_validate(trx);
+            if (pass) {
+                // write ì•ˆì—ì„œ ì‹¤ì œ commit ê¹Œì§€ ì²˜ë¦¬í•˜ë„ë¡ ì„¤ê³„ë˜ì–´ ìˆìŒ
+                write(trx);
+            } else {
+                abort(trx);
+            }
+        } else {
+            std::cout << "WRONG OPERATION!\n";
+        }
+
+        // ì´ ì•¡ì…˜ì€ ì²˜ë¦¬ ëë‚¬ìœ¼ë‹ˆ ì‚­ì œ
+        it = actions.erase(it);
+    }
+
+    return;
 }
