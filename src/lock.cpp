@@ -235,7 +235,7 @@ void lock::rollback(trx_t trx) {
         } else {
             // trx가 아닌 다른 트랜잭션의 액션은 유지하고 prev 갱신
             prev = cur;
-            ++it;
+            ++it;asd
         }
     }
 
@@ -246,7 +246,7 @@ void lock::rollback(trx_t trx) {
         if (cur.size() >= 2 && (int)(cur[1] - '0') == trx.id) {
             it = actions.erase(it);
         } else {
-            ++it;
+            ++it;ss
         }
     }
 
