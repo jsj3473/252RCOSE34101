@@ -214,21 +214,6 @@ void lock::release_lock(trx_t trx) {
 	[HINT] check `actions` vector, we record transaction's actions in the `trx.actions` vector.
 */
 
-// lock.cpp 상단 어딘가에 헬퍼 하나 추가
-static int extract_tid(const std::string& op) {
-    int tid = 0;
-    bool found = false;
-    for (char c : op) {
-        if (std::isdigit(static_cast<unsigned char>(c))) {
-            tid = tid * 10 + (c - '0');  // 두 자리 이상도 대응
-            found = true;
-        } else if (found) {
-            break;
-        }
-    }
-    return found ? tid : -1;  // 숫자 없으면 -1
-}
-
 void lock::rollback(trx_t trx) {
     std::cout << "[ROLLBACK] TX" << trx.id << " is rollbeck!\n";
 
@@ -236,20 +221,45 @@ void lock::rollback(trx_t trx) {
     release_lock(trx);
 
     // step2. Remove the actions performed by the transaction from the `output` vector.
+    //  -> 이때만 "R1(A) R2(B) erase R2(B)" 같은 로그를 찍음.
+    std::string prev = "";
     for (auto it = output.begin(); it != output.end(); ) {
-        const std::string& op = *it;
-        if (op.size() >= 2 && (int)(op[1] - '0') == trx.id) {
-            it = output.erase(it);
+        const std::string &cur = *it;
+
+        if (cur.size() >= 2 && (int)(cur[1] - '0') == trx.id) {
+            // 바로 앞에 남아 있는 액션이 있다면, 그걸 prev로 찍어 줌
+            if (!prev.empty()) {
+                std::cout << prev << " " << cur << " erase " << cur << "\n";
+            }
+            it = output.erase(it);  // 현재 trx의 액션 삭제
+        } else {
+            // trx가 아닌 다른 트랜잭션의 액션은 유지하고 prev 갱신
+            prev = cur;
+            ++it;
+        }
+    }
+
+    // step3-1. Remove the remaining actions of this transaction from the `actions` vector.
+    //  -> 여기서는 절대 로그 안 찍음 (솔루션도 안 찍음)
+    for (auto it = actions.begin(); it != actions.end(); ) {
+        const std::string &cur = *it;
+        if (cur.size() >= 2 && (int)(cur[1] - '0') == trx.id) {
+            it = actions.erase(it);
         } else {
             ++it;
         }
     }
 
+    // step3-2. Append all actions of this transaction to the end of `actions` vector.
+    //  -> 스케줄 처음부터 다시 실행해야 하니까 trx.actions 전체를 뒤에 붙임
+    for (const auto &act : trx.actions) {
+        actions.push_back(act);
+    }
 
-
-    // DO NOT MODIFY
+    // step4. DO NOT MODIFY
     trx.timestamp = global_counter++;
 }
+
 
 
 
