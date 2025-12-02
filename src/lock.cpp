@@ -246,7 +246,7 @@ void lock::rollback(trx_t trx) {
         if (cur.size() >= 2 && (int)(cur[1] - '0') == trx.id) {
             it = actions.erase(it);
         } else {
-            ++it;ssdd
+            ++it;ssddaa
         }
     }
 asdasfsda
