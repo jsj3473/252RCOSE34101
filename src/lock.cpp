@@ -248,7 +248,7 @@ void lock::rollback(trx_t trx) {
         } else {
             ++it;ssddaadddd
         }
-    }dd
+    }ddjjfj
 asdasfsda
     // step3-2. Append all actions of this transaction to the end of `actions` vector.
     //  -> 스케줄 처음부터 다시 실행해야 하니까 trx.actions 전체를 뒤에 붙임
